@@ -1,0 +1,12 @@
+[submodule "Motion-Player-ROS"]
+	path = Motion-Player-ROS
+	url = https://github.com/MOVIN3D/Motion-Player-ROS.git
+[submodule "mjlab"]
+	path = mjlab
+	url = https://github.com/mujocolab/mjlab
+[submodule "RoboJuDo"]
+	path = RoboJuDo
+	url = https://github.com/experientialtech/RoboJuDo.git
+[submodule "external/video2robot"]
+	path = external/video2robot
+	url = https://github.com/AIM-Intelligence/video2robot
