@@ -288,6 +288,18 @@ class RlLocoMimicPipeline(RlMultiPolicyPipeline):
         self.post_step_callback(env_data, ctrl_data, extras, pd_target)
 
     def prepare(self):
+        # En este punto:
+        # - AMO ya está cargado.
+        # - BeyondMimic ya está cargado.
+        # - La ONNX ya está lista.
+        # - Unitree todavía sostiene al robot.
+
+        if hasattr(self.env, "activate_control"):
+            self.env.activate_control()
+
+        # Inmediatamente comienza la preparación normal,
+        # partiendo hacia la postura estable de locomoción.
+
         init_motor_angle = self.loco_dof_pos.copy()
         super().prepare(init_motor_angle=init_motor_angle)
     

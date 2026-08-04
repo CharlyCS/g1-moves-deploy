@@ -349,6 +349,7 @@ class g1_daddance_safe_real(G1RlLocoMimicPipelineCfg):
 
         unitree=G1UnitreeCfg(
             net_if="eth0",
+            defer_release=True
         ),
     )
 

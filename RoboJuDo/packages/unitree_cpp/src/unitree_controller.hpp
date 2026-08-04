@@ -27,6 +27,9 @@
 
 #include <unitree/idl/go2/SportModeState_.hpp>
 
+#include <atomic>
+
+
 using std::size_t;
 using namespace unitree::common;
 using namespace unitree::robot;
@@ -144,25 +147,39 @@ struct UnitreeConfig {
     bool enable_odometry;
     std::string sport_state_topic;
 
+
+    //bool enable_torso_imu;  // indica si se debe habilitar la suscripción al IMU del torso
+    //std::string torso_imu_topic;    // nombre del topic para el IMU del torso, no cambiar aun no inicializado-
+
+
     std::vector<double> stiffness;
     std::vector<double> damping;
     unsigned short num_dofs;
-};
+
+    bool defer_release = false; // posponer la liberación del controlador original de Unitree
+
+    };
 
 class UnitreeController {
    public:
     UnitreeController(const UnitreeConfig& cfg);
     ~UnitreeController();
     bool self_check();
+
+    void activate(const std::vector<double>& initial_positions); // activa el controlador y establece las posiciones iniciales de las articulaciones
+    bool is_control_active() const; // indica si el controlador está activo y controlando el robot
+
     void step(const std::vector<double>& actions);
     void step_hands(const std::vector<double>& l_hand_pose, const std::vector<double>& r_hand_pose);
     void set_gains(const std::vector<double>& stiffness, const std::vector<double>& damping);
     void shutdown();
 
-    RobotState get_robot_state();
+    RobotState get_robot_state();   
     SportState get_sport_state();
 
+
    private:
+
     UnitreeConfig cfg_;
 
     std::vector<double> stiffness_;
@@ -198,9 +215,16 @@ class UnitreeController {
     ThreadPtr handcmd_writer_ptr_;
 
     std::shared_ptr<unitree::robot::b2::MotionSwitcherClient> msc_;
+    
+    std::atomic<bool> control_active_{false}; // indica si el controlador está activo y controlando el robot
+    void release_motion_service(); // llamar al servicio de cambio 
 
     void LowStateHandler(const void* message);
     void SportStateHandler(const void* message);
+
+    void TorsoImuStateHandler(const void* message); // torso IMU handler 
+
+
     void LowCommandWriter();
     void HandCommandWriter();
 };

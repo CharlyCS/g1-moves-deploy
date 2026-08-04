@@ -79,6 +79,9 @@ void bind_UnitreeController(py::module_& m) {
             cfg.stiffness = cfg_dict["stiffness"].cast<std::vector<double>>();
             cfg.damping = cfg_dict["damping"].cast<std::vector<double>>();
             cfg.num_dofs = cfg_dict["num_dofs"].cast<unsigned short>();
+            /////////////////////// inicializar
+            cfg.defer_release = cfg_dict.contains("defer_release") ? cfg_dict["defer_release"].cast<bool>() : false;
+            ///////////////////////////
 
             std::string mode_str = cfg_dict["control_mode"].cast<std::string>();
             if (mode_str == "position")
@@ -94,12 +97,18 @@ void bind_UnitreeController(py::module_& m) {
         }))
         .def(py::init<const UnitreeConfig&>(), py::arg("config"))
         .def("self_check", &UnitreeController::self_check)
+
+        .def("activate",&UnitreeController::activate,py::arg("initial_positions"))
+        .def("is_control_active",&UnitreeController::is_control_active)
+
         .def("step", &UnitreeController::step, py::arg("actions"))
         .def("step_hands", &UnitreeController::step_hands, py::arg("l_hand_pose"), py::arg("r_hand_pose"))
         .def("set_gains", &UnitreeController::set_gains, py::arg("stiffness"), py::arg("damping"))
         .def("shutdown", &UnitreeController::shutdown)
         .def("get_robot_state", &UnitreeController::get_robot_state)
         .def("get_sport_state", &UnitreeController::get_sport_state);
+
+
 }
 
 PYBIND11_MODULE(unitree_cpp, m) {

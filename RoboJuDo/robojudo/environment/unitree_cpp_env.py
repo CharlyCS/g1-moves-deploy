@@ -191,7 +191,7 @@ class UnitreeCppEnv(Environment):
         self.enabled = False
         self.unitree.emergency_damp()
 
-
+    # este shutdown es un alias de emergency_damp para compatibilidad con RoboJuDo. No debe llamarse al finalizar normalmente un baile.
     def shutdown(self):
         """
         Alias conservado por compatibilidad con RoboJuDo.
@@ -201,6 +201,7 @@ class UnitreeCppEnv(Environment):
         """
         self.emergency_damp()
 
+    # Cambio de shtudown
     '''
     def shutdown(self):
         # self.set_damping_mode()
@@ -215,6 +216,28 @@ class UnitreeCppEnv(Environment):
             return
         self.unitree.set_gains(stiffness, damping)
 
+    def activate_control(self):
+        if self.unitree.is_control_active():
+            return
+
+        # Obtener el estado más reciente mientras Unitree aún sostiene al robot.
+        self.update()
+
+        # Usar el orden directo de motores del LowState.
+        current_motor_q = np.asarray(
+            self.robot_state.motor_state.q,
+            dtype=np.float64,
+        )
+
+        logger.warning(
+            "Activating RoboJuDo low-level control from current robot pose."
+        )
+
+        self.unitree.activate(current_motor_q.tolist())
+
+        logger.warning(
+            "RoboJuDo low-level control activated."
+        )
 
 if __name__ == "__main__":
     from robojudo.config.g1.env.g1_real_env_cfg import G1RealEnvCfg

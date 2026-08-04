@@ -14,6 +14,9 @@ class G1UnitreeCfg(UnitreeEnvCfg.UnitreeCfg):
 
     enable_odometry: bool = True
 
+    ####################
+    defer_release: bool = False  # si es True, el controlador no se activará automáticamente al iniciar el entorno. Esto permite que el robot se mueva libremente antes de que se active el control.
+
 
 class G1RealEnvCfg(G1EnvCfg, UnitreeEnvCfg):
     # env_type: str = UnitreeEnvCfg.model_fields["env_type"].default

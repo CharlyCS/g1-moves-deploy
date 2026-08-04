@@ -47,17 +47,22 @@ UnitreeController::UnitreeController(const UnitreeConfig& cfg)
     ChannelFactory::Instance()->Init(0, cfg_.net_if);
     std::cout << "UnitreeController initialized with network interface: " << cfg_.net_if << std::endl;
 
+
+    // ACTIVATION SWITCHER MODE
+    ///////////////////////////////////////////
     // try to shutdown motion control-related service
-    msc_ = std::make_shared<unitree::robot::b2::MotionSwitcherClient>();
-    msc_->SetTimeout(5.0f);
-    msc_->Init();
-    std::string form, name;
-    while (msc_->CheckMode(form, name), !name.empty()) {
-        if (msc_->ReleaseMode())
-            std::cout << "Failed to switch to Release Mode\n";
-        // sleep(1);
-    }
-    std::cout << "Motion control service shutdown successfully." << std::endl;
+    // msc_ = std::make_shared<unitree::robot::b2::MotionSwitcherClient>();
+    // msc_->SetTimeout(5.0f);
+    // msc_->Init();
+    // std::string form, name;
+    // while (msc_->CheckMode(form, name), !name.empty()) {
+    //     if (msc_->ReleaseMode())
+    //         std::cout << "Failed to switch to Release Mode\n";
+    //     sleep(1);
+    // }
+    // std::cout << "Motion control service shutdown successfully." << std::endl;
+    ///////////////////////////////////////////
+
 
     // create publisher
     lowcmd_publisher_.reset(new ChannelPublisher<LowCmd_>(cfg_.lowcmd_topic));  // TODO: switch Cmd Type
@@ -82,6 +87,14 @@ UnitreeController::UnitreeController(const UnitreeConfig& cfg)
     // create threads
     command_writer_ptr_ = CreateRecurrentThreadEx("command_writer", UT_CPU_ID_NONE, uint(cfg.control_dt * 1e6), &UnitreeController::LowCommandWriter, this);
 
+
+    // Initialize the MotionSwitcherClient, luego de haber iniciado lowcmd, lowstate, imu, etc
+    /////////////////////////////////////////////////////
+    msc_ = std::make_shared<unitree::robot::b2::MotionSwitcherClient>();
+    msc_->SetTimeout(5.0f);
+    msc_->Init();
+    /////////////////////////////////////////////////////
+
     handcmd_left_publisher_.reset(new ChannelPublisher<HandCmd_>("rt/dex3/left/cmd"));
     handcmd_left_publisher_->InitChannel();
     handcmd_right_publisher_.reset(new ChannelPublisher<HandCmd_>("rt/dex3/right/cmd"));
@@ -89,6 +102,11 @@ UnitreeController::UnitreeController(const UnitreeConfig& cfg)
     handcmd_writer_ptr_ = CreateRecurrentThreadEx("handcmd_writer", UT_CPU_ID_NONE, uint(cfg.control_dt * 1e6 * 5), &UnitreeController::HandCommandWriter, this);
 
     init_done_ = true;
+
+    if (!cfg_.defer_release) {
+        release_motion_service();
+        control_active_.store(true);
+    }
 }
 
 UnitreeController::~UnitreeController() {
@@ -177,6 +195,14 @@ void UnitreeController::SportStateHandler(const void* message) {
 }
 
 void UnitreeController::LowCommandWriter() {
+
+    ////////////////// si no esta activo el control, no enviar comandos. 
+    // Esto permite que el hilo exista mientras Unitree todavía controla al robot, pero evita publicar comandos prematuramente.
+    if (!control_active_.load()) {
+        return;
+    }
+    //////////////////
+
     LowCmd_ dds_low_command;
     dds_low_command.mode_pr() = static_cast<uint8_t>(mode_pr_);
     dds_low_command.mode_machine() = mode_machine_;
@@ -234,6 +260,19 @@ void UnitreeController::HandCommandWriter() {
 }
 
 void UnitreeController::step(const std::vector<double>& actions) {
+
+    // si no esta activo el control, lanzar un error. Esto permite que el hilo exista mientras Unitree todavía controla al robot, pero evita publicar comandos prematuramente.
+    //////////////////////////////////////
+    if (!control_active_.load()) {
+        throw std::runtime_error(
+            "UnitreeController::step() called before activate()"
+        );
+    }
+
+    //////////////////////////////////////
+
+
+
     if (actions.size() != num_dofs_) {
         throw std::runtime_error("actions size mismatch");
     }
@@ -338,6 +377,96 @@ SportState UnitreeController::get_sport_state() {
         throw std::runtime_error("Sport state data is not available");
     }
 }
+
+
+// Release para que unitree qtenga el control hasta que se active loco mimic
+//////////////////////////////////////////////////
+void UnitreeController::release_motion_service() {
+    std::string form;
+    std::string name;
+
+    while (true) {
+        msc_->CheckMode(form, name);
+
+        if (name.empty()) {
+            break;
+        }
+
+        std::cout
+            << "[TAKEOVER] Releasing Unitree mode: "
+            << name
+            << std::endl;
+
+        const int32_t ret = msc_->ReleaseMode();
+
+        if (ret != 0) {
+            std::cerr
+                << "[TAKEOVER] ReleaseMode failed. code="
+                << ret
+                << std::endl;
+
+            usleep(100000);
+            continue;
+        }
+
+        // No dejar una pausa de un segundo.
+        usleep(10000);
+    }
+
+    std::cout
+        << "[TAKEOVER] Unitree motion service released."
+        << std::endl;
+}
+
+
+void UnitreeController::activate(
+    const std::vector<double>& initial_positions
+) {
+    if (control_active_.load()) {
+        return;
+    }
+
+    if (initial_positions.size() != num_dofs_) {
+        throw std::runtime_error(
+            "activate(): initial_positions size mismatch"
+        );
+    }
+
+    // Preparar el primer LowCmd ANTES de liberar el modo Unitree.
+    MotorCommand hold_command(num_dofs_);
+
+    for (size_t i = 0; i < num_dofs_; ++i) {
+        hold_command.q_target.at(i) =
+            static_cast<float>(initial_positions.at(i));
+
+        hold_command.dq_target.at(i) = 0.0f;
+        hold_command.kp.at(i) =
+            static_cast<float>(stiffness_.at(i));
+        hold_command.kd.at(i) =
+            static_cast<float>(damping_.at(i));
+        hold_command.tau_ff.at(i) = 0.0f;
+    }
+
+    motor_command_buffer_.SetData(hold_command);
+
+    // Unitree mantiene el equilibrio hasta este punto.
+    release_motion_service();
+
+    // Desde aquí RoboJuDo ya es el propietario del control.
+    control_active_.store(true);
+
+    // Enviar inmediatamente, sin esperar al siguiente ciclo del hilo.
+    LowCommandWriter();
+
+    std::cout
+        << "[TAKEOVER] First RoboJuDo hold command sent."
+        << std::endl;
+}
+
+bool UnitreeController::is_control_active() const {
+    return control_active_.load();
+}
+
 
 int main(int argc, char const* argv[]) {
     // Example usage of UnitreeController
