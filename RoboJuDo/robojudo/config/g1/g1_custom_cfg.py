@@ -17,6 +17,7 @@ from .ctrl.g1_motion_ctrl_cfg import (  # noqa: F401
     G1MotionKungfuBotCtrlCfg,
     G1MotionTwistCtrlCfg,
 )
+
 from .ctrl.g1_twist_redis_ctrl_cfg import G1TwistRedisCtrlCfg  # noqa: F401
 from .env.g1_dummy_env_cfg import G1DummyEnvCfg  # noqa: F401
 from .env.g1_mujuco_env_cfg import G1_12MujocoEnvCfg, G1_23MujocoEnvCfg, G1MujocoEnvCfg  # noqa: F401
@@ -33,9 +34,21 @@ from .policy.g1_unitree_policy_cfg import G1UnitreePolicyCfg, G1UnitreeWoGaitPol
 ##### ADDED
 from .pipeline.g1_locomimic_pipeline_cfg import G1RlLocoMimicPipelineCfg
 
+# ======================= Define frames======================== #
+
+import numpy as np
+from pathlib import Path
+
+def get_motion_frames(policy_name: str) -> int:
+    path = Path(
+        f"/home/unitree/glexone-ws/g1_moves_data/dance/{policy_name}/training/{policy_name}.npz"
+    ).expanduser()
+
+    motion = np.load(path)
+    frames = int(motion["joint_pos"].shape[0])
+    return frames
 
 # ======================== Custom Configs ======================== #
-
 
 @cfg_registry.register
 class g1_dev(RlPipelineCfg):
@@ -51,7 +64,7 @@ class g1_dev(RlPipelineCfg):
 
 ###### EL REGISTRY PARA EL ONNX "NAME".ONNX
 @cfg_registry.register
-class g1_daddance(RlPipelineCfg):
+class g1_daddance_protodance(RlPipelineCfg):
     """
     B_DadDance exportado desde MJLab al formato BeyondMimic ONNX.
     Configuración exclusiva para sim2sim.
@@ -98,6 +111,8 @@ class g1_daddance(RlPipelineCfg):
     run_fullspeed: bool = False
     do_safety_check: bool = False
 
+
+# lectura de motores
 @cfg_registry.register
 class g1_salsa_shadow(RlPipelineCfg):
     """
@@ -146,54 +161,9 @@ class g1_salsa_shadow(RlPipelineCfg):
     run_fullspeed: bool = False
     do_safety_check: bool = True
 
-'''
-@cfg_registry.register
-class g1_daddance_real(RlPipelineCfg):
-    """
-    Despliegue físico de B_DadDance.
-    """
-
-    robot: str = "g1"
-
-    env: G1RealEnvCfg = G1RealEnvCfg(
-        act=True,
-
-        env_type="UnitreeCppEnv",
-
-        unitree=G1UnitreeCfg(
-            net_if="enp7s0",
-            enable_odometry=True,
-        ),
-
-        odometry_type="UNITREE",
-        update_with_fk=True,
-        born_place_align=True,
-    )
-
-    ctrl: list[UnitreeCtrlCfg] = [
-        UnitreeCtrlCfg(),
-    ]
-
-    policy: G1BeyondMimicPolicyCfg = G1BeyondMimicPolicyCfg(
-        policy_name="B_DadDance",
-
-        without_state_estimator=False,
-        override_robot_anchor_pos=False,
-
-        use_motion_from_model=True,
-        use_modelmeta_config=True,
-
-        start_timestep=0,
-        max_timestep=2508,
-    )
-
-    run_fullspeed: bool = False
-    do_safety_check: bool = True
-
-'''
 
 @cfg_registry.register
-class g1_daddance_safe_real(G1RlLocoMimicPipelineCfg):
+class g1_daddance_real(G1RlLocoMimicPipelineCfg):
     """
     B_DadDance con política de locomoción de respaldo.
 
@@ -203,6 +173,8 @@ class g1_daddance_safe_real(G1RlLocoMimicPipelineCfg):
     3. Al terminar el movimiento, vuelve automáticamente a locomoción.
     4. El proceso continúa ejecutándose y mantiene al robot de pie.
     """
+
+    dance_name: str = "B_DadDance"
 
     robot: str = "g1"
 
@@ -244,7 +216,7 @@ class g1_daddance_safe_real(G1RlLocoMimicPipelineCfg):
 
     mimic_policies: list[G1BeyondMimicPolicyCfg] = [
         G1BeyondMimicPolicyCfg(
-            policy_name="B_DadDance",
+            policy_name=dance_name,
 
             ############
             freq=50,
@@ -263,14 +235,14 @@ class g1_daddance_safe_real(G1RlLocoMimicPipelineCfg):
 
             # Usa este campo solamente si el modelo no reporta
             # correctamente el final del movimiento.
-            max_timestep=2508,
+            max_timestep=get_motion_frames(dance_name),
         ),
     ]
 
     do_safety_check: bool = True
 
 @cfg_registry.register
-class g1_salsa_safe_real(G1RlLocoMimicPipelineCfg):
+class g1_salsa_real(G1RlLocoMimicPipelineCfg):
     """
     B_DadDance con política de locomoción de respaldo.
 
@@ -280,6 +252,8 @@ class g1_salsa_safe_real(G1RlLocoMimicPipelineCfg):
     3. Al terminar el movimiento, vuelve automáticamente a locomoción.
     4. El proceso continúa ejecutándose y mantiene al robot de pie.
     """
+
+    dance_name: str = "J_Dance2_Salsa"
 
     robot: str = "g1"
 
@@ -320,7 +294,7 @@ class g1_salsa_safe_real(G1RlLocoMimicPipelineCfg):
 
     mimic_policies: list[G1BeyondMimicPolicyCfg] = [
         G1BeyondMimicPolicyCfg(
-            policy_name="J_Dance2_Salsa",
+            policy_name=dance_name,
 
             ############
             freq=50,
@@ -339,7 +313,7 @@ class g1_salsa_safe_real(G1RlLocoMimicPipelineCfg):
 
             # Usa este campo solamente si el modelo no reporta
             # correctamente el final del movimiento.
-            max_timestep=2150,
+            max_timestep=get_motion_frames(dance_name),
         ),
     ]
 
@@ -347,7 +321,7 @@ class g1_salsa_safe_real(G1RlLocoMimicPipelineCfg):
 
 
 @cfg_registry.register
-class g1_woah_safe_real(G1RlLocoMimicPipelineCfg):
+class g1_woah_real(G1RlLocoMimicPipelineCfg):
     """
     B_DadDance con política de locomoción de respaldo.
 
@@ -357,6 +331,8 @@ class g1_woah_safe_real(G1RlLocoMimicPipelineCfg):
     3. Al terminar el movimiento, vuelve automáticamente a locomoción.
     4. El proceso continúa ejecutándose y mantiene al robot de pie.
     """
+
+    dance_name: str = "J_Dance3_Woah"
 
     robot: str = "g1"
 
@@ -397,7 +373,7 @@ class g1_woah_safe_real(G1RlLocoMimicPipelineCfg):
 
     mimic_policies: list[G1BeyondMimicPolicyCfg] = [
         G1BeyondMimicPolicyCfg(
-            policy_name="J_Dance3_Woah",
+            policy_name=dance_name,
 
             ############
             freq=50,
@@ -416,7 +392,7 @@ class g1_woah_safe_real(G1RlLocoMimicPipelineCfg):
 
             # Usa este campo solamente si el modelo no reporta
             # correctamente el final del movimiento.
-            max_timestep=1799
+            max_timestep=get_motion_frames(dance_name)
         ),
     ]
 
