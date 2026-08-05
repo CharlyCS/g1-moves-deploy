@@ -13,6 +13,8 @@ from robojudo.pipeline.rl_multi_policy_pipeline import PolicyManager, RlMultiPol
 from robojudo.pipeline.rl_pipeline import PolicyWrapper
 from robojudo.policy import PolicyCfg
 from robojudo.utils.progress import ProgressBar
+import time
+
 
 logger = logging.getLogger(__name__)
 
@@ -287,22 +289,185 @@ class RlLocoMimicPipeline(RlMultiPolicyPipeline):
 
         self.post_step_callback(env_data, ctrl_data, extras, pd_target)
 
-    def prepare(self):
-        # En este punto:
-        # - AMO ya está cargado.
-        # - BeyondMimic ya está cargado.
-        # - La ONNX ya está lista.
-        # - Unitree todavía sostiene al robot.
+    # def prepare(self):
+    #     # En este punto:
+    #     # - AMO ya está cargado.
+    #     # - BeyondMimic ya está cargado.
+    #     # - La ONNX ya está lista.
+    #     # - Unitree todavía sostiene al robot.
 
-        if hasattr(self.env, "activate_control"):
-            self.env.activate_control()
+    #     if hasattr(self.env, "activate_control"):
+    #         self.env.activate_control()
 
-        # Inmediatamente comienza la preparación normal,
-        # partiendo hacia la postura estable de locomoción.
+    #     # Inmediatamente comienza la preparación normal,
+    #     # partiendo hacia la postura estable de locomoción.
 
-        init_motor_angle = self.loco_dof_pos.copy()
-        super().prepare(init_motor_angle=init_motor_angle)
+    #     init_motor_angle = self.loco_dof_pos.copy()
+    #     super().prepare(init_motor_angle=init_motor_angle)
     
+
+    #   calculo de salide de AMO para locomocion, aun no corre el comando al robot
+    #############################
+    def _get_loco_pd_target(self):
+        """
+        Calcula una salida de AMO utilizando el estado real actual.
+        No envía todavía el comando al robot.
+        """
+
+        self.env.update()
+
+        env_data = self.env.get_data()
+        ctrl_data = self.ctrl_manager.get_ctrl_data(env_data)
+
+        # Referencia usada por la política de locomoción.
+        ctrl_data["ref_dof_pos"] = self.policy.obs_adapter.fit(
+            self.policy_manager.override_dof_pos
+        )
+
+        obs, extras = self.policy.get_observation(
+            env_data,
+            ctrl_data,
+        )
+
+        pd_target = self.policy.get_pd_target(obs)
+
+        # AMO controla activamente piernas y cintura.
+        # Los DOF superiores se mantienen en la referencia seleccionada.
+        pd_target[self.override_dof_indices] = (
+            self.policy_manager.override_dof_pos[
+                self.override_dof_indices
+            ]
+        )
+
+        return np.asarray(pd_target, dtype=np.float64), extras
+    #############################
+
+    def prepare(self):
+        """
+        Toma de control segura:
+
+        1. Unitree AI mantiene el balance mientras se prepara AMO.
+        2. Se calcula la primera salida AMO antes de ReleaseMode.
+        3. El primer LowCmd ya contiene una salida de locomoción activa.
+        4. AMO controla inmediatamente piernas y cintura.
+        5. Solo brazos y torso superior se interpolan suavemente.
+        6. El robot queda en locomoción con comandos cero hasta START.
+        """
+
+        logger.warning(
+            "LocoMimic prepare: direct takeover with active AMO balance."
+        )
+
+        loco_id = self.policy_manager.policy_loco_id
+
+        # Forzar que la política actual sea AMO.
+        if self.policy_manager.current_policy_id != loco_id:
+            self.policy_manager.set_policy(loco_id)
+        else:
+            # Asegurar que los KP/KD correspondan a AMO.
+            self.env.update_dof_cfg(
+                override_cfg=self.policy.cfg_action_dof
+            )
+
+        self.policy_locomotion_mimic_flag = 0
+
+        # Reset mientras Unitree AI todavía mantiene el robot.
+        self.reset()
+
+        self.env.update()
+
+        current_dof_pos = np.asarray(
+            self.env.dof_pos,
+            dtype=np.float64,
+        ).copy()
+
+        loco_dof_pos = np.asarray(
+            self.loco_dof_pos,
+            dtype=np.float64,
+        ).copy()
+
+        upper_indices = np.asarray(
+            self.override_dof_indices,
+            dtype=np.int64,
+        )
+
+        # Los brazos y el torso superior comienzan exactamente
+        # en la posición física actual para evitar un salto.
+        initial_override = loco_dof_pos.copy()
+        initial_override[upper_indices] = current_dof_pos[upper_indices]
+
+        self.policy_manager.override_dof_pos = initial_override
+
+        # Calcular AMO antes de liberar el modo Unitree.
+        first_pd_target, _ = self._get_loco_pd_target()
+
+        max_initial_delta = float(
+            np.max(np.abs(first_pd_target - current_dof_pos))
+        )
+
+        logger.warning(
+            "First AMO target computed. "
+            f"Maximum joint difference: {max_initial_delta:.4f} rad"
+        )
+
+        # El primer comando cargado en UnitreeController ya es AMO.
+        if hasattr(self.env, "activate_control"):
+            self.env.activate_control(
+                initial_positions=first_pd_target
+            )
+        else:
+            raise RuntimeError(
+                "UnitreeCppEnv does not implement activate_control()"
+            )
+
+        # AMO controla desde este momento.
+        # Durante un segundo se interpolan únicamente los DOF superiores.
+        settle_seconds = 1.0
+        settle_steps = max(
+            int(settle_seconds * self.freq),
+            1,
+        )
+
+        logger.warning(
+            "AMO active — blending upper body only "
+            f"({settle_steps} steps, {settle_seconds:.1f}s)"
+        )
+
+        next_step_time = time.perf_counter()
+
+        for step_idx in range(settle_steps):
+            alpha = (step_idx + 1) / settle_steps
+
+            upper_override = loco_dof_pos.copy()
+
+            upper_override[upper_indices] = (
+                (1.0 - alpha) * current_dof_pos[upper_indices]
+                + alpha * loco_dof_pos[upper_indices]
+            )
+
+            self.policy_manager.override_dof_pos = upper_override
+
+            # Ejecuta AMO completo:
+            # observación, inferencia, PD target y envío.
+            self.step()
+
+            next_step_time += self.dt
+            remaining = next_step_time - time.perf_counter()
+
+            if remaining > 0:
+                time.sleep(remaining)
+            else:
+                next_step_time = time.perf_counter()
+
+        self.policy_manager.override_dof_pos = loco_dof_pos.copy()
+
+        logger.warning(
+            "AMO locomotion active — robot holding balance. "
+            "Press START to begin mimic motion."
+        )
+    
+    
+
     # ADDED TO NOT BREAK THE INTERFACE Force Locomation
     def force_locomotion(self):
         if self.policy_locomotion_mimic_flag != 0:

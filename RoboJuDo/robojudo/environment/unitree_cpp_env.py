@@ -216,6 +216,46 @@ class UnitreeCppEnv(Environment):
             return
         self.unitree.set_gains(stiffness, damping)
 
+    def activate_control(self, initial_positions=None):
+        if self.unitree.is_control_active():
+            return
+
+        # Actualizar estado mientras Unitree AI todavía sostiene al robot.
+        self.update()
+
+        current_dof_pos = np.asarray(
+            self.dof_pos,
+            dtype=np.float64,
+        )
+
+        if initial_positions is None:
+            initial_target = current_dof_pos
+        else:
+            initial_target = np.asarray(
+                initial_positions,
+                dtype=np.float64,
+            )
+
+        if initial_target.shape != current_dof_pos.shape:
+            raise ValueError(
+                "activate_control(): tamaño incorrecto. "
+                f"Esperado={current_dof_pos.shape}, "
+                f"recibido={initial_target.shape}"
+            )
+
+        logger.warning(
+            "Activating RoboJuDo with precomputed locomotion target."
+        )
+
+        # El primer comando después de ReleaseMode ya será AMO,
+        # no una postura articular estática.
+        self.unitree.activate(initial_target.tolist())
+
+        logger.warning(
+            "RoboJuDo low-level control activated."
+        )
+
+    '''
     def activate_control(self):
         if self.unitree.is_control_active():
             return
@@ -238,6 +278,8 @@ class UnitreeCppEnv(Environment):
         logger.warning(
             "RoboJuDo low-level control activated."
         )
+    '''
+
 
 if __name__ == "__main__":
     from robojudo.config.g1.env.g1_real_env_cfg import G1RealEnvCfg
