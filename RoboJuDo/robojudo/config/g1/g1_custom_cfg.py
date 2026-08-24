@@ -38,15 +38,22 @@ from .pipeline.g1_locomimic_pipeline_cfg import G1RlLocoMimicPipelineCfg
 
 import numpy as np
 from pathlib import Path
+import yaml
+import os 
+
+DANCES_YAML = "/home/unitree/glexone-ws/g1-moves/RoboJuDo/scripts/dances.yaml"
+MOTION_ROOT = Path("/home/unitree/glexone-ws/g1_moves_data/dance")
 
 def get_motion_frames(policy_name: str) -> int:
-    path = Path(
-        f"/home/unitree/glexone-ws/g1_moves_data/dance/{policy_name}/training/{policy_name}.npz"
-    ).expanduser()
+    path = (
+        MOTION_ROOT
+        / policy_name
+        / "training"
+        / f"{policy_name}.npz"
+    )
 
     motion = np.load(path)
-    frames = int(motion["joint_pos"].shape[0])
-    return frames
+    return int(motion["joint_pos"].shape[0])
 
 # ======================== Custom Configs ======================== #
 
@@ -943,3 +950,105 @@ class g1_disco_real(G1RlLocoMimicPipelineCfg):
 
     do_safety_check: bool = True
 
+trigger_base = {
+                "A": "[SHUTDOWN]",
+                "Select": "[POLICY_LOCO]",
+                "Start": "[POLICY_MIMIC]"
+            }
+
+def load_dances_config(path_yaml: str) -> list[dict]:
+    if not os.path.exists(path_yaml):
+        raise FileNotFoundError(
+            f"No existe el archivo de configuración: {path_yaml}"
+        )
+
+    with open(path_yaml, "r", encoding="utf-8") as f:
+        config_yaml = yaml.safe_load(f) or {}
+
+    dances = config_yaml.get("dances", [])
+
+    if not isinstance(dances, list):
+        raise ValueError(
+            "'dances' debe ser una lista dentro del YAML"
+        )
+
+    return dances
+
+
+dances = load_dances_config(DANCES_YAML)
+
+for dance in dances:
+    button = dance["button"]
+    name = dance["name"]
+
+    trigger_base[button] = f"[POLICY_SWITCH] {name}"
+
+@cfg_registry.register
+class g1_dances_main(G1RlLocoMimicPipelineCfg):
+    """
+    B_DadDance con política de locomoción de respaldo.
+
+    Flujo:
+    1. Inicia usando locomoción estable.
+    2. START o R inicia el baile.
+    3. Al terminar el movimiento, vuelve automáticamente a locomoción.
+    4. El proceso continúa ejecutándose y mantiene al robot de pie.
+    """
+
+    #dance_name: str = "B_DadDance"
+
+    robot: str = "g1"
+
+    env: G1RealEnvCfg = G1RealEnvCfg(
+        env_type="UnitreeCppEnv",
+
+        update_with_fk=True,
+        born_place_align=True,
+
+        unitree=G1UnitreeCfg(
+            net_if="eth0",
+            defer_release=True
+        ),
+    )
+
+    ctrl: list[UnitreeCtrlCfg | KeyboardCtrlCfg] = [
+        UnitreeCtrlCfg(
+            combination_init_buttons=["L1", "R1", "F2"],
+            triggers=trigger_base,
+        )
+    ]
+
+    # for key, value in len(trigger_base.items()-1):
+    #     if trigger_base[key]:
+    #         dance_name: str = value.split(" ")[1]
+            
+    # Política que se encarga de mantener equilibrio y locomoción.
+    # Usa únicamente una política que ya hayas validado físicamente.
+    loco_policy: G1AmoPolicyCfg = G1AmoPolicyCfg(freq = 50) # la frecuencia se puede eliminar
+
+    mimic_policies: list[G1BeyondMimicPolicyCfg] = [
+        G1BeyondMimicPolicyCfg(
+            policy_name=dance["name"],
+
+            ############
+            freq=50,
+            motion_fps=60.0,
+            playback_rate=1.0,
+
+            # Suavizado moderado.
+            action_beta=0.8,
+            ############
+
+            without_state_estimator=False,
+
+            override_robot_anchor_pos=False,
+
+            use_motion_from_model=True,
+
+            # Usa este campo solamente si el modelo no reporta
+            # correctamente el final del movimiento.
+            max_timestep=get_motion_frames(dance["name"]),
+        ),
+    ]
+
+    do_safety_check: bool = True

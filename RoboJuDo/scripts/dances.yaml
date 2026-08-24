@@ -1,0 +1,10 @@
+# scripts/dances.yaml
+dances:
+  - button: F2+Down
+    name: B_DadDance
+
+  - button: F2+Right
+    name: J_Dance2_Salsa
+
+  - button: F2+Up
+    name: J_Dance3_Woah

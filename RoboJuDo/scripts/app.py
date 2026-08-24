@@ -13,6 +13,8 @@ import robojudo.pipeline
 from robojudo.config.config_manager import ConfigManager
 from robojudo.pipeline.pipeline_cfgs import RlPipelineCfg
 from robojudo.pipeline.rl_pipeline import RlPipeline
+import json
+
 
 logger = logging.getLogger("robojudo")
 
