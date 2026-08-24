@@ -131,6 +131,60 @@ class PolicyInterpManager(PolicyManager):
         policy_name = self.policy_by_id(policy_id).name
         logger.info(f"Switch mimic policy to {self.policy_mimic_idx}: {policy_name}")
 
+    # select by policy function
+    def select_mimic_policy(self, policy_name: str):
+        """
+        Selecciona una mimic policy por nombre.
+
+        No inicia la policy inmediatamente.
+        Solo modifica policy_mimic_idx para que START
+        ejecute posteriormente la policy seleccionada.
+        """
+
+        # Solo permitir selección mientras estamos en locomoción.
+        if self.current_policy_id != self.policy_loco_id:
+            logger.warning(
+                "Cannot switch mimic policy when policy is mimic."
+            )
+            return False
+
+        # Evitar cambiar selección durante una transición.
+        if self.interp_state != self.InterpState.IDLE:
+            logger.warning(
+                "Cannot switch mimic policy during interpolation."
+            )
+            return False
+
+        policy_name = policy_name.strip()
+
+        for idx, policy_id in enumerate(self.policy_mimic_ids):
+            policy = self.policy_by_id(policy_id)
+
+            if policy.name == policy_name:
+                self.policy_mimic_idx = idx
+
+                logger.info(
+                    f"Selected mimic policy "
+                    f"idx={idx}, "
+                    f"id={policy_id}, "
+                    f"name={policy.name}"
+                )
+
+                return True
+
+        available = [
+            self.policy_by_id(policy_id).name
+            for policy_id in self.policy_mimic_ids
+        ]
+
+        logger.error(
+            f"Mimic policy '{policy_name}' not found. "
+            f"Available policies: {available}"
+        )
+
+        return False
+
+
     def switch_to_loco(self):
         if self.current_policy_id == self.policy_loco_id and self.interp_state == self.InterpState.IDLE:
             logger.warning("Already in locomotion policy.")
@@ -160,7 +214,7 @@ class PolicyInterpManager(PolicyManager):
     def step(self, env_data, ctrl_data):
         super().step(env_data, ctrl_data)
         self._interpolate_step()
-
+    
 
 @pipeline_registry.register
 class RlLocoMimicPipeline(RlMultiPolicyPipeline):

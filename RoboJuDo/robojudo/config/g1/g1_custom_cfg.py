@@ -981,7 +981,7 @@ for dance in dances:
     button = dance["button"]
     name = dance["name"]
 
-    trigger_base[button] = f"[POLICY_SWITCH] {name}"
+    trigger_base[button] = f"[POLICY_SWITCH], {name}"
 
 @cfg_registry.register
 class g1_dances_main(G1RlLocoMimicPipelineCfg):
